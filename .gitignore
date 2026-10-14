@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Wavefront model assets (not compiler object files)
+!/Models/*.obj

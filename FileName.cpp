@@ -1,10 +1,17 @@
-﻿#include <windows.h>
+﻿#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <windowsx.h>
 #include <d3d11.h> 
 #include <d3dcompiler.h> 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "d3d11.lib") 
 #pragma comment(lib, "d3dcompiler.lib")// シェーダー用 
+#include "ObjLoader.h"
+#include <algorithm>
+#include <limits>
+#include <cfloat>
 #include <cstddef>
 #include <cstring>
 #include <cmath> 
@@ -23,17 +30,6 @@ ID3D11PixelShader* g_ps = nullptr;
 ID3D11InputLayout* g_layout = nullptr;
 /// DepthBuffer 
 ID3D11DepthStencilView* g_dsv = nullptr;
-// 頂点  + color 
-struct Vertex
-{
-    float x, y, z;
-    float r, g, b, a;
-    float u, v;
-    // PDF vertex layout: tangent and normal, plus UV orientation for normal mapping.
-    float tx = 1.0f, ty = 0.0f, tz = 0.0f;
-    float nx = 0.0f, ny = 0.0f, nz = 0.0f;
-    float tangentSign = 1.0f;
-};
 using namespace DirectX;// append  
 // 定数バッファ  append 
 ID3D11Buffer* g_constantBuffer = nullptr;
@@ -120,7 +116,7 @@ XMFLOAT3 pointLightColor(1.0f, 1.0f, 1.0f);
 float cameraYaw = 0.0f, cameraPitch = 0.0f, cameraDistance = 5.0f;
 bool mouseDraggingL = false, mouseDraggingR = false;
 int lastMouseX = 0, lastMouseY = 0;
-enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312 };
+enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere };
 BoxShape g_boxShape = BoxShape::Cube;
 bool g_boxShapeDirty = false;
 
@@ -151,6 +147,56 @@ void ResetCamera()
 void SelectBoxShape(BoxShape shape)
 {
     if (g_boxShape != shape) { g_boxShape = shape; g_boxShapeDirty = true; }
+}
+// Resolve both project-directory launches and launches beside the built EXE.
+std::filesystem::path ResolveAssetPath(const std::filesystem::path& relative)
+{
+    std::error_code error;
+    if (std::filesystem::is_regular_file(relative, error)) return relative;
+    std::wstring module(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
+    if (length > 0 && length < module.size()) {
+        module.resize(length);
+        const auto candidate = std::filesystem::path(module).parent_path() / relative;
+        error.clear();
+        if (std::filesystem::is_regular_file(candidate, error)) return candidate;
+    }
+    return relative;
+}
+struct ObjAsset
+{
+    ObjMesh mesh;
+    XMMATRIX fitTransform = XMMatrixIdentity();
+};
+ObjAsset g_objCube, g_objSphere;
+
+bool LoadDemoModel(const std::filesystem::path& relative, ObjAsset& asset)
+{
+    const auto filename = ResolveAssetPath(relative);
+    std::string error, warning;
+    if (!LoadOBJ(filename, asset.mesh, error, &warning)) {
+        OutputDebugStringA((error + "\n").c_str());
+        const std::wstring message = L"OBJ load failed: " + filename.wstring();
+        MessageBoxW(g_hWnd, message.c_str(), L"OBJ Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    if (!warning.empty()) OutputDebugStringA(warning.c_str());
+    XMFLOAT3 low = { FLT_MAX, FLT_MAX, FLT_MAX }, high = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    for (const Vertex& vertex : asset.mesh.vertices) {
+        low.x = (std::min)(low.x, vertex.x); high.x = (std::max)(high.x, vertex.x);
+        low.y = (std::min)(low.y, vertex.y); high.y = (std::max)(high.y, vertex.y);
+        low.z = (std::min)(low.z, vertex.z); high.z = (std::max)(high.z, vertex.z);
+    }
+    const float extent = (std::max)({high.x-low.x, high.y-low.y, high.z-low.z});
+    const float fitScale = extent > 0.0001f ? 1.0f / extent : 1.0f;
+    // Preserve the OBJ data, fitting it into the existing rotating object's slot.
+    asset.fitTransform = XMMatrixTranslation(-(low.x+high.x)*0.5f, -(low.y+high.y)*0.5f, -(low.z+high.z)*0.5f) *
+        XMMatrixScaling(fitScale, fitScale, fitScale);
+    return true;
+}
+bool LoadDemoModels()
+{
+    return LoadDemoModel(L"Models/cube.obj", g_objCube) && LoadDemoModel(L"Models/sphere.obj", g_objSphere);
 }
 ///  IndexBuffer  //// 
 ID3D11Buffer* g_ib = nullptr;
@@ -211,6 +257,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case 'V': SelectBoxShape(BoxShape::Cuboid123); return 0;
         case 'B': SelectBoxShape(BoxShape::Cuboid231); return 0;
         case 'N': SelectBoxShape(BoxShape::Cuboid312); return 0;
+        case '9': SelectBoxShape(BoxShape::ObjCube); return 0;
+        case '0': SelectBoxShape(BoxShape::ObjSphere); return 0;
         }
         break;
     case WM_DESTROY:
@@ -755,6 +803,10 @@ public:
 void RebuildBoxShape()
 {
     if (!g_boxShapeDirty) return;
+    if (g_boxShape == BoxShape::ObjCube || g_boxShape == BoxShape::ObjSphere) {
+        g_boxShapeDirty = false;
+        return;
+    }
     Cube box;
     switch (g_boxShape) {
     case BoxShape::Cuboid123: box.MakeCuboid(1.0f, 2.0f, 3.0f); break;
@@ -1139,7 +1191,7 @@ cbuffer ConstantBuffer : register(b0)
     hr = CreateWICTextureFromFile(
         g_device,
         g_context,
-        L"check.png",
+        ResolveAssetPath(L"check.png").c_str(),
         nullptr,
         &g_texture0);
     if (FAILED(hr)) {
@@ -1150,7 +1202,7 @@ cbuffer ConstantBuffer : register(b0)
     hr = CreateWICTextureFromFile(
         g_device,
         g_context,
-        L"check2.png",
+        ResolveAssetPath(L"check2.png").c_str(),
         nullptr,
         &g_texture1);
     if (FAILED(hr)) {
@@ -1161,7 +1213,7 @@ cbuffer ConstantBuffer : register(b0)
     hr = CreateWICTextureFromFile(
         g_device,
         g_context,
-        L"mask5b_normal.png",
+        ResolveAssetPath(L"mask5b_normal.png").c_str(),
         nullptr,
         &material.normal);
     if (FAILED(hr)) {
@@ -1172,7 +1224,7 @@ cbuffer ConstantBuffer : register(b0)
     hr = CreateWICTextureFromFile(
         g_device,
         g_context,
-        L"mask5b.png",
+        ResolveAssetPath(L"mask5b.png").c_str(),
         nullptr,
         &material.mask);
     if (FAILED(hr)) {
@@ -1226,7 +1278,7 @@ void Clear_view()
         0);
 }
 
-void Render(Vertex* vertices_, int vertexCount, UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured)// Render change 7 / 22
+void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured, const XMMATRIX* modelTransform = nullptr)// Render change 7 / 22
 {
 
     if (g_vb) { g_vb->Release(); g_vb = nullptr; }
@@ -1351,6 +1403,7 @@ void Render(Vertex* vertices_, int vertexCount, UINT* indices_, int indexCount, 
     //回転してから移動,拡大・縮小 
 
     XMMATRIX world = scale * rotation * trans;
+    if (modelTransform) world = *modelTransform * world;
     if (surfaceType == SurfaceType::Light) {
         world = XMMatrixScaling(0.09f, 0.09f, 0.09f) *
             XMMatrixTranslation(light_x, light_y, light_z);
@@ -1524,6 +1577,19 @@ g_context->DrawIndexed(indexCount, 0, 0);
 
 /*g_swapChain->Present(1, 0);*/
 }
+// Reuse the same position, rotation and glossy material for imported models.
+void RenderSelectedBox()
+{
+    if (g_boxShape == BoxShape::ObjCube || g_boxShape == BoxShape::ObjSphere) {
+        const ObjAsset& asset = g_boxShape == BoxShape::ObjCube ? g_objCube : g_objSphere;
+        Render(asset.mesh.vertices.data(), static_cast<int>(asset.mesh.vertices.size()),
+            asset.mesh.indices.data(), static_cast<int>(asset.mesh.indices.size()), 1,
+            SurfaceType::Mirror, &asset.fitTransform);
+    }
+    else {
+        Render(vertices_cube, 24, indices_cube, IndexCountCube, 1, SurfaceType::Mirror);
+    }
+}
 void AfterRender()
 {
     g_swapChain->Present(1, 0);
@@ -1567,6 +1633,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         WS_OVERLAPPEDWINDOW, 100, 100, 800, 600,
         nullptr, nullptr, hInst, nullptr);
     ShowWindow(g_hWnd, SW_SHOWDEFAULT);
+    if (!LoadDemoModels()) { DestroyWindow(g_hWnd); CoUninitialize(); return 1; }
     if (!InitD3D()) { Cleanup(); CoUninitialize(); return 1; }
     int num = 5;//Regular number
 
@@ -1741,7 +1808,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         float zr_old = zr;
         xr = 1.0f; yr = 1.0f; zr = 0.0f; // X/Y 回転で立体的に回転
         material.diffuse = g_texture1;
-        Render(vertices_cube, 24, indices_cube, IndexCountCube, 1, SurfaceType::Mirror);
+        RenderSelectedBox();
 
         // 状態を復元
         xr = xr_old; yr = yr_old; zr = zr_old;

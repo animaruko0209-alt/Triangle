@@ -1,8 +1,8 @@
 ﻿# DirectX 11 テクスチャ・点光源・鏡面反射デモ
 
 Visual Studio 2022 / Windows SDK / DirectXTK (NuGet) を使用します。
-`Project1.sln` の Debug / x64 をビルドしてください。PNGはビルド先にもコピーされます。
-実行ファイルを直接起動する場合は、PNGがあるフォルダーを作業ディレクトリにしてください。
+`Project1.sln` の Debug / x64 をビルドしてください。PNGとModelsフォルダーはビルド先にもコピーされます。
+画像とモデルは作業フォルダー、次に実行ファイルのフォルダーから検索します。
 
 - 円柱は底面・上面・側面の頂点を分け、底面と上面に平面UV、側面に周回UVを設定しています。
 - `check.png` / `check2.png`、`mask5b.png`、`mask5b_normal.png` を使用します。
@@ -20,6 +20,7 @@ Visual Studio 2022 / Windows SDK / DirectXTK (NuGet) を使用します。
 | 右ドラッグ | 点光源をX / Z方向に移動 |
 | J / L | 点光源を左右に移動 |
 | K | 点光源を初期位置に戻す |
+| 9 / 0 | OBJから読み込んだ立方体 / 球 |
 | C | 立方体 (1 × 1 × 1) |
 | V / B / N | 直方体 (1 × 2 × 3 / 2 × 3 × 1 / 3 × 1 × 2) |
 | 3〜8 | 手前の円柱の角数を変更 |
@@ -33,3 +34,17 @@ Visual Studio 2022 / Windows SDK / DirectXTK (NuGet) を使用します。
 Bは資料に合わせて直方体切り替えに使用し、従来の後退操作はGに移しています。
 
 参考資料: `MkCylinder_Vertex3_new.pdf`、`DirectX11_Diffuse_Specular4.pdf`。
+
+## OBJモデル
+
+`Models/cube.obj` と `Models/sphere.obj` は添付データをそのまま収録しています。
+9 / 0キーで左側の回転オブジェクトをOBJモデルに切り替え、Cで生成した立方体に戻せます。
+位置・回転速度・PNG材質は共通です。OBJの元データは保持し、表示時に中心と大きさを揃えます。
+多角形の三角形化、UVのV反転、法線の読み込み、接線とUVの向きの計算を行います。
+法線がない場合は面法線を生成し、UVがない・重複する場合にも安定した接線を使います。
+MTL材質の自動取り込みは行わず、既存のPNGと鏡面反射を使用します。
+
+依存ライブラリは公式の [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader) から取得済みです。
+`third_party/tinyobjloader` にヘッダー、MITライセンス、取得コミットを同梱しています。
+再ダウンロードせずビルドできます。モデルの *.obj はGitで追跡できるよう除外設定を調整しています。
+参考資料: `objLoader.pdf`。

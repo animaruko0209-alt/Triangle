@@ -15,11 +15,19 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ObjLoader.cpp"><Filter>ソース ファイル</Filter></ClCompile>
     <ClCompile Include="FileName.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="Models\cube.obj"><Filter>リソース ファイル</Filter></None>
+    <None Include="Models\sphere.obj"><Filter>リソース ファイル</Filter></None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Vertex.h"><Filter>ヘッダー ファイル</Filter></ClInclude>
+    <ClInclude Include="ObjLoader.h"><Filter>ヘッダー ファイル</Filter></ClInclude>
+    <ClInclude Include="third_party\tinyobjloader\tiny_obj_loader.h"><Filter>ヘッダー ファイル</Filter></ClInclude>
   </ItemGroup>
 </Project>

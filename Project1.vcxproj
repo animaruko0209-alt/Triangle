@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -122,17 +122,35 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FileName.cpp" />
+    <ClCompile Include="ObjLoader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="Models\cube.obj" />
+    <None Include="Models\sphere.obj" />
+    <None Include="third_party\tinyobjloader\LICENSE" />
+    <None Include="third_party\tinyobjloader\UPSTREAM_COMMIT.txt" />
   </ItemGroup>
   <ItemGroup>
     <TextureAsset Include="$(ProjectDir)*.png" />
+    <ModelAsset Include="$(ProjectDir)Models\*.obj" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Vertex.h" />
+    <ClInclude Include="ObjLoader.h" />
+    <ClInclude Include="third_party\tinyobjloader\tiny_obj_loader.h" />
   </ItemGroup>
   <Target Name="CopyTextures" AfterTargets="Build">
     <Copy SourceFiles="@(TextureAsset)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ModelAsset)" DestinationFolder="$(OutDir)Models" SkipUnchangedFiles="true" />
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
