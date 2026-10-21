@@ -116,7 +116,7 @@ XMFLOAT3 pointLightColor(1.0f, 1.0f, 1.0f);
 float cameraYaw = 0.0f, cameraPitch = 0.0f, cameraDistance = 5.0f;
 bool mouseDraggingL = false, mouseDraggingR = false;
 int lastMouseX = 0, lastMouseY = 0;
-enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere };
+enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere, ObjPlatonic };
 BoxShape g_boxShape = BoxShape::Cube;
 bool g_boxShapeDirty = false;
 
@@ -168,7 +168,17 @@ struct ObjAsset
     ObjMesh mesh;
     XMMATRIX fitTransform = XMMatrixIdentity();
 };
-ObjAsset g_objCube, g_objSphere;
+ObjAsset g_objCube, g_objSphere, g_objPlatonic;
+
+const ObjAsset* SelectedObjAsset()
+{
+    switch (g_boxShape) {
+    case BoxShape::ObjCube: return &g_objCube;
+    case BoxShape::ObjSphere: return &g_objSphere;
+    case BoxShape::ObjPlatonic: return &g_objPlatonic;
+    default: return nullptr;
+    }
+}
 
 bool LoadDemoModel(const std::filesystem::path& relative, ObjAsset& asset)
 {
@@ -196,7 +206,9 @@ bool LoadDemoModel(const std::filesystem::path& relative, ObjAsset& asset)
 }
 bool LoadDemoModels()
 {
-    return LoadDemoModel(L"Models/cube.obj", g_objCube) && LoadDemoModel(L"Models/sphere.obj", g_objSphere);
+    return LoadDemoModel(L"Models/cube.obj", g_objCube) &&
+        LoadDemoModel(L"Models/sphere.obj", g_objSphere) &&
+        LoadDemoModel(L"Models/platonic.obj", g_objPlatonic);
 }
 ///  IndexBuffer  //// 
 ID3D11Buffer* g_ib = nullptr;
@@ -259,6 +271,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case 'N': SelectBoxShape(BoxShape::Cuboid312); return 0;
         case '9': SelectBoxShape(BoxShape::ObjCube); return 0;
         case '0': SelectBoxShape(BoxShape::ObjSphere); return 0;
+        case 'P': SelectBoxShape(BoxShape::ObjPlatonic); return 0;
         }
         break;
     case WM_DESTROY:
@@ -803,7 +816,7 @@ public:
 void RebuildBoxShape()
 {
     if (!g_boxShapeDirty) return;
-    if (g_boxShape == BoxShape::ObjCube || g_boxShape == BoxShape::ObjSphere) {
+    if (SelectedObjAsset()) {
         g_boxShapeDirty = false;
         return;
     }
@@ -1580,11 +1593,10 @@ g_context->DrawIndexed(indexCount, 0, 0);
 // Reuse the same position, rotation and glossy material for imported models.
 void RenderSelectedBox()
 {
-    if (g_boxShape == BoxShape::ObjCube || g_boxShape == BoxShape::ObjSphere) {
-        const ObjAsset& asset = g_boxShape == BoxShape::ObjCube ? g_objCube : g_objSphere;
-        Render(asset.mesh.vertices.data(), static_cast<int>(asset.mesh.vertices.size()),
-            asset.mesh.indices.data(), static_cast<int>(asset.mesh.indices.size()), 1,
-            SurfaceType::Mirror, &asset.fitTransform);
+    if (const ObjAsset* asset = SelectedObjAsset()) {
+        Render(asset->mesh.vertices.data(), static_cast<int>(asset->mesh.vertices.size()),
+            asset->mesh.indices.data(), static_cast<int>(asset->mesh.indices.size()), 1,
+            SurfaceType::Mirror, &asset->fitTransform);
     }
     else {
         Render(vertices_cube, 24, indices_cube, IndexCountCube, 1, SurfaceType::Mirror);

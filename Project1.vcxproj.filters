@@ -24,6 +24,7 @@
     <None Include="packages.config" />
     <None Include="Models\cube.obj"><Filter>リソース ファイル</Filter></None>
     <None Include="Models\sphere.obj"><Filter>リソース ファイル</Filter></None>
+    <None Include="Models\platonic.obj"><Filter>リソース ファイル</Filter></None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Vertex.h"><Filter>ヘッダー ファイル</Filter></ClInclude>

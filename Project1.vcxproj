@@ -136,6 +136,7 @@
     <None Include="packages.config" />
     <None Include="Models\cube.obj" />
     <None Include="Models\sphere.obj" />
+    <None Include="Models\platonic.obj" />
     <None Include="third_party\tinyobjloader\LICENSE" />
     <None Include="third_party\tinyobjloader\UPSTREAM_COMMIT.txt" />
   </ItemGroup>

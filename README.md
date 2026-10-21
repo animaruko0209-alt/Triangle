@@ -21,6 +21,7 @@ Visual Studio 2022 / Windows SDK / DirectXTK (NuGet) を使用します。
 | J / L | 点光源を左右に移動 |
 | K | 点光源を初期位置に戻す |
 | 9 / 0 | OBJから読み込んだ立方体 / 球 |
+| P | OBJから読み込んだ多面体（platonic.obj） |
 | C | 立方体 (1 × 1 × 1) |
 | V / B / N | 直方体 (1 × 2 × 3 / 2 × 3 × 1 / 3 × 1 × 2) |
 | 3〜8 | 手前の円柱の角数を変更 |
@@ -37,8 +38,8 @@ Bは資料に合わせて直方体切り替えに使用し、従来の後退操�
 
 ## OBJモデル
 
-`Models/cube.obj` と `Models/sphere.obj` は添付データをそのまま収録しています。
-9 / 0キーで左側の回転オブジェクトをOBJモデルに切り替え、Cで生成した立方体に戻せます。
+`Models/cube.obj`、`Models/sphere.obj` と、ZIP内の `Models/platonic.obj` は添付データをそのまま収録しています。
+9 / 0 / Pキーで左側の回転オブジェクトを立方体 / 球 / 多面体のOBJモデルに切り替え、Cで生成した立方体に戻せます。
 位置・回転速度・PNG材質は共通です。OBJの元データは保持し、表示時に中心と大きさを揃えます。
 多角形の三角形化、UVのV反転、法線の読み込み、接線とUVの向きの計算を行います。
 法線がない場合は面法線を生成し、UVがない・重複する場合にも安定した接線を使います。
@@ -47,4 +48,5 @@ MTL材質の自動取り込みは行わず、既存のPNGと鏡面反射を使�
 依存ライブラリは公式の [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader) から取得済みです。
 `third_party/tinyobjloader` にヘッダー、MITライセンス、取得コミットを同梱しています。
 再ダウンロードせずビルドできます。モデルの *.obj はGitで追跡できるよう除外設定を調整しています。
-参考資料: `objLoader.pdf`。
+参考資料: `objLoader.pdf`、今回添付の `DirectX11_OBJ_Reader.pdf`（`DirectX11_OBJ_Reader_old.pdf` は旧版）。
+資料のOBJ読み込み・接線計算を既存ローダーと照合し、現在の描画処理に統合しています。
