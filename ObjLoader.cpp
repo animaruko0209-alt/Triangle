@@ -75,7 +75,22 @@ bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
                 if (warn) *warn += "Could not open MTL: " + name + "\n";
                 return false;
             }
+            const size_t first = materials->size();
             tinyobj::LoadMtl(materialMap, materials, &mtl, warn, err);
+            // Resolve paths against the MTL, with the supplied textures/ convention.
+            for (size_t i = first; i < materials->size(); ++i) {
+                auto resolve = [&](std::string& texture) {
+                    if (texture.empty()) return;
+                    const auto folder = (base_ / std::filesystem::u8path(name)).parent_path();
+                    auto path = folder / std::filesystem::u8path(texture);
+                    std::error_code ec;
+                    if (!std::filesystem::is_regular_file(path, ec))
+                        path = folder / "textures" / std::filesystem::u8path(texture);
+                    texture = path.u8string();
+                };
+                resolve((*materials)[i].diffuse_texname);
+                resolve((*materials)[i].bump_texname);
+            }
             return true;
         }
     private:
@@ -93,6 +108,8 @@ bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
     for (const auto& source : materials) {
         ObjMaterial mat;
         mat.name = source.name;
+        mat.diffuseTexture = std::filesystem::u8path(source.diffuse_texname);
+        mat.normalTexture = std::filesystem::u8path(source.bump_texname);
         for (int i = 0; i < 3; ++i) {
             mat.diffuse[i] = std::isfinite(source.diffuse[i]) ? source.diffuse[i] : 1.0f;
             mat.specular[i] = std::isfinite(source.specular[i]) ? source.specular[i] : 0.0f;
@@ -100,8 +117,6 @@ bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
         mat.opacity = std::isfinite(source.dissolve) ? (std::max)(0.0f, (std::min)(1.0f, source.dissolve)) : 1.0f;
         mat.shininess = std::isfinite(source.shininess) ? (std::max)(1.0f, source.shininess) : 32.0f;
         loaded.materials.push_back(mat);
-        if (warning && (!source.diffuse_texname.empty() || !source.bump_texname.empty()))
-            *warning += "MTL texture maps are not imported: " + source.name + "\n";
     }
     size_t skipped = 0;
     for (const auto& shape : shapes) {

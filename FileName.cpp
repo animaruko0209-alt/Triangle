@@ -17,6 +17,7 @@
 #include <cmath> 
 #include <iostream> 
 #include <DirectXMath.h>// append 
+#include <wrl/client.h>
 #include <WICTextureLoader.h> /// append texture read 
 // グローバル 
 HWND g_hWnd = nullptr;
@@ -72,6 +73,7 @@ struct MaterialBuffer
     float specularIntensity;
     float diffuseWeight;
     float surfaceType;
+    XMFLOAT4 textureFlags; // diffuse, normal, mask, reserved
 };
 enum class SurfaceType { Textured, Mirror, Light };
 struct Material {
@@ -116,8 +118,8 @@ XMFLOAT3 pointLightColor(1.0f, 1.0f, 1.0f);
 float cameraYaw = 0.0f, cameraPitch = 0.0f, cameraDistance = 5.0f;
 bool mouseDraggingL = false, mouseDraggingR = false;
 int lastMouseX = 0, lastMouseY = 0;
-enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere, ObjPlatonic, ObjPlatonicMaterial };
-BoxShape g_boxShape = BoxShape::Cube;
+enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere, ObjPlatonic, ObjPlatonicMaterial, ObjDice };
+BoxShape g_boxShape = BoxShape::ObjDice;
 bool g_boxShapeDirty = false;
 
 float ClampValue(float value, float low, float high)
@@ -163,12 +165,21 @@ std::filesystem::path ResolveAssetPath(const std::filesystem::path& relative)
     }
     return relative;
 }
+using Microsoft::WRL::ComPtr;
+struct ObjMaterialTextures
+{
+    ComPtr<ID3D11ShaderResourceView> diffuse, normal, mask;
+    bool hasDiffuseMap = false;
+};
+ComPtr<ID3D11ShaderResourceView> g_defaultDiffuse, g_defaultNormal, g_defaultMask;
+std::filesystem::path objMaskTexture = L"mask_default.png";
 struct ObjAsset
 {
     ObjMesh mesh;
+    std::vector<ObjMaterialTextures> textures;
     XMMATRIX fitTransform = XMMatrixIdentity();
 };
-ObjAsset g_objCube, g_objSphere, g_objPlatonic, g_objPlatonicMaterial;
+ObjAsset g_objCube, g_objSphere, g_objPlatonic, g_objPlatonicMaterial, g_objDice;
 
 const ObjAsset* SelectedObjAsset()
 {
@@ -177,6 +188,7 @@ const ObjAsset* SelectedObjAsset()
     case BoxShape::ObjSphere: return &g_objSphere;
     case BoxShape::ObjPlatonic: return &g_objPlatonic;
     case BoxShape::ObjPlatonicMaterial: return &g_objPlatonicMaterial;
+    case BoxShape::ObjDice: return &g_objDice;
     default: return nullptr;
     }
 }
@@ -210,7 +222,39 @@ bool LoadDemoModels()
     return LoadDemoModel(L"Models/cube.obj", g_objCube) &&
         LoadDemoModel(L"Models/sphere.obj", g_objSphere) &&
         LoadDemoModel(L"Models/platonic.obj", g_objPlatonic) &&
-        LoadDemoModel(L"Models/platonic_m.obj", g_objPlatonicMaterial);
+        LoadDemoModel(L"Models/platonic_m.obj", g_objPlatonicMaterial) &&
+        LoadDemoModel(L"Models/dice2.obj", g_objDice);
+}
+// Texture pointers stay on the CPU, outside the GPU constant-buffer layout.
+bool LoadObjTexture(const std::filesystem::path& path, ComPtr<ID3D11ShaderResourceView>& texture)
+{
+    const HRESULT hr = CreateWICTextureFromFile(g_device, path.c_str(), nullptr,
+        texture.ReleaseAndGetAddressOf());
+    if (FAILED(hr)) OutputDebugStringW((L"OBJ texture unavailable: " + path.wstring() + L"\n").c_str());
+    return SUCCEEDED(hr);
+}
+bool LoadDemoModelTextures()
+{
+    if (!LoadObjTexture(ResolveAssetPath(L"Models/textures/diffuse_default.png"), g_defaultDiffuse) ||
+        !LoadObjTexture(ResolveAssetPath(L"Models/textures/normal_default.png"), g_defaultNormal) ||
+        !LoadObjTexture(ResolveAssetPath(L"Models/textures/mask_default.png"), g_defaultMask)) return false;
+    for (ObjAsset* asset : {&g_objCube, &g_objSphere, &g_objPlatonic, &g_objPlatonicMaterial, &g_objDice}) {
+        asset->textures.resize(asset->mesh.materials.size());
+        for (const auto& batch : asset->mesh.batches) {
+            if (batch.materialId < 0) continue;
+            auto& textures = asset->textures[batch.materialId];
+            if (textures.diffuse) continue;
+            const auto& mat = asset->mesh.materials[batch.materialId];
+            if (!mat.diffuseTexture.empty()) textures.hasDiffuseMap = LoadObjTexture(mat.diffuseTexture, textures.diffuse);
+            if (!textures.diffuse) textures.diffuse = g_defaultDiffuse;
+            if (!mat.normalTexture.empty()) LoadObjTexture(mat.normalTexture, textures.normal);
+            if (!textures.normal) textures.normal = g_defaultNormal;
+            if (objMaskTexture != L"mask_default.png")
+                LoadObjTexture(ResolveAssetPath(std::filesystem::path(L"Models/textures") / objMaskTexture), textures.mask);
+            if (!textures.mask) textures.mask = g_defaultMask;
+        }
+    }
+    return true;
 }
 ///  IndexBuffer  //// 
 ID3D11Buffer* g_ib = nullptr;
@@ -273,6 +317,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case 'N': SelectBoxShape(BoxShape::Cuboid312); return 0;
         case '9': SelectBoxShape(BoxShape::ObjCube); return 0;
         case '0': SelectBoxShape(BoxShape::ObjSphere); return 0;
+        case 'T': SelectBoxShape(BoxShape::ObjDice); return 0;
         case 'M': SelectBoxShape(BoxShape::ObjPlatonicMaterial); return 0;
         case 'P': SelectBoxShape(BoxShape::ObjPlatonic); return 0;
         }
@@ -1012,6 +1057,7 @@ cbuffer ConstantBuffer : register(b0)
         float specularIntensity;
         float diffuseWeight;
         float surfaceType;
+        float4 textureFlags;
     };
     cbuffer LightBuffer : register(b2)
     {
@@ -1046,15 +1092,14 @@ cbuffer ConstantBuffer : register(b0)
     // The small emissive marker shows the position of the point light.
     if (surfaceType > 1.5f && surfaceType < 2.5f)
         return float4(saturate(lightColor * intensity), 1.0f);
-    bool mtlSurface = surfaceType > 2.5f;
-    float4 diffuseColor = mtlSurface ? float4(1,1,1,1) : diffuse.Sample(sam,input.uv);
+    float4 diffuseColor = textureFlags.x > 0.5f ? diffuse.Sample(sam,input.uv) : float4(1,1,1,1);
  
     // Version 3 supplies per-vertex normals and tangents. Legacy meshes
     // without normals retain the geometric-normal fallback.
     float3 n = input.worldNormal;
     bool hasVertexNormal = dot(n, n) > 0.000001f;
     n = hasVertexNormal ? normalize(n) : normalize(cross(ddx(input.worldPos), ddy(input.worldPos)));
-    if (hasVertexNormal && !mtlSurface) {
+    if (hasVertexNormal && textureFlags.y > 0.5f) {
         float3 tangent = normalize(input.worldTangent.xyz - n * dot(n, input.worldTangent.xyz));
         float3 bitangent = cross(n, tangent) * input.worldTangent.w;
         float3 mappedNormal = normal.Sample(sam, input.uv).xyz * 2.0f - 1.0f;
@@ -1082,7 +1127,7 @@ cbuffer ConstantBuffer : register(b0)
     float3 lighting = (diffuseTerm + specularTerm) * attenuation * intensity;
     // Retain a faint ambient fill so texture remains readable on unlit faces.
     lighting += baseColor * 0.035f;
-    float maskValue = mtlSurface ? 1.0f : mask.Sample(sam, input.uv).r;
+    float maskValue = textureFlags.z > 0.5f ? mask.Sample(sam, input.uv).r : 1.0f;
     return float4(saturate(lighting * maskValue), diffuseColor.a * color.a * input.col.a);
     } 
     )";
@@ -1295,7 +1340,7 @@ void Clear_view()
         0);
 }
 
-void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured, const XMMATRIX* modelTransform = nullptr, const ObjMesh* objMesh = nullptr)// Render change 7 / 22
+void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured, const XMMATRIX* modelTransform = nullptr, const ObjAsset* objAsset = nullptr)// Render change 7 / 22
 {
 
     if (g_vb) { g_vb->Release(); g_vb = nullptr; }
@@ -1490,6 +1535,7 @@ void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int 
     // 質感バッファ更新 append 
     // ----------------------------- 
     MaterialBuffer mb = {};
+    mb.textureFlags = XMFLOAT4(1, 1, 1, 0);
     mb.diffuseWeight = 0.7f;
     if (move == 0) {
         mb.color = XMFLOAT4(1.0f, 0.9f, 1.0f, 1.0f);
@@ -1590,10 +1636,12 @@ g_context->PSSetConstantBuffers(3, 1, &g_cameraBuffer);
 //g_context->Draw(vertexCount, 0); 
 
 // ★★ Index指定 複数三角形描画  
-if (objMesh && !objMesh->materials.empty()) {
+if (objAsset && !objAsset->mesh.materials.empty()) {
+    const ObjMesh* objMesh = &objAsset->mesh;
     const MaterialBuffer fallback = mb;
     for (const auto& batch : objMesh->batches) {
         mb = fallback;
+        ID3D11ShaderResourceView* maps[] = {material.diffuse, material.normal, material.mask};
         if (batch.materialId >= 0 && size_t(batch.materialId) < objMesh->materials.size()) {
             const auto& mat = objMesh->materials[batch.materialId];
             mb.color = XMFLOAT4(mat.diffuse[0], mat.diffuse[1], mat.diffuse[2], mat.opacity);
@@ -1601,9 +1649,16 @@ if (objMesh && !objMesh->materials.empty()) {
             mb.specularPower = mat.shininess;
             mb.specularIntensity = 1.0f;
             mb.diffuseWeight = 1.0f;
-            mb.surfaceType = 3.0f; // Numeric MTL material, without PNG/normal/mask modulation.
+            mb.surfaceType = 3.0f;
+            const auto& textures = objAsset->textures[batch.materialId];
+            if (textures.hasDiffuseMap) mb.color = XMFLOAT4(1, 1, 1, mat.opacity);
+            maps[0] = textures.diffuse.Get();
+            maps[1] = textures.normal.Get();
+            maps[2] = textures.mask.Get();
+            mb.textureFlags = XMFLOAT4(maps[0] ? 1.0f : 0.0f, maps[1] ? 1.0f : 0.0f, maps[2] ? 1.0f : 0.0f, 0);
         }
         g_context->UpdateSubresource(g_materialBuffer, 0, nullptr, &mb, 0, 0);
+        g_context->PSSetShaderResources(0, 3, maps);
         g_context->DrawIndexed(batch.indexCount, batch.startIndex, 0);
     }
 }
@@ -1619,7 +1674,7 @@ void RenderSelectedBox()
     if (const ObjAsset* asset = SelectedObjAsset()) {
         Render(asset->mesh.vertices.data(), static_cast<int>(asset->mesh.vertices.size()),
             asset->mesh.indices.data(), static_cast<int>(asset->mesh.indices.size()), 1,
-            SurfaceType::Mirror, &asset->fitTransform, &asset->mesh);
+            SurfaceType::Mirror, &asset->fitTransform, asset);
     }
     else {
         Render(vertices_cube, 24, indices_cube, IndexCountCube, 1, SurfaceType::Mirror);
@@ -1633,6 +1688,9 @@ void AfterRender()
 void Cleanup()
 {
     if (g_context) g_context->ClearState();
+    for (ObjAsset* asset : {&g_objCube, &g_objSphere, &g_objPlatonic, &g_objPlatonicMaterial, &g_objDice})
+        asset->textures.clear();
+    g_defaultDiffuse.Reset(); g_defaultNormal.Reset(); g_defaultMask.Reset();
     if (g_ib) g_ib->Release();
     if (g_dsv) g_dsv->Release();
     if (g_sampler) g_sampler->Release();
@@ -1670,6 +1728,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     ShowWindow(g_hWnd, SW_SHOWDEFAULT);
     if (!LoadDemoModels()) { DestroyWindow(g_hWnd); CoUninitialize(); return 1; }
     if (!InitD3D()) { Cleanup(); CoUninitialize(); return 1; }
+    if (!LoadDemoModelTextures()) { Cleanup(); DestroyWindow(g_hWnd); CoUninitialize(); return 1; }
     int num = 5;//Regular number
 
     TriangleIndex* triangle5;

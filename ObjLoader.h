@@ -11,6 +11,8 @@ struct ObjMaterial
     std::string name;
     float diffuse[3] = {1, 1, 1};
     float specular[3] = {1, 1, 1};
+    std::filesystem::path diffuseTexture;
+    std::filesystem::path normalTexture;
     float opacity = 1.0f;
     float shininess = 32.0f;
 };
@@ -30,6 +32,6 @@ struct ObjMesh
 };
 
 // Keeps the previous mesh intact on failure. MTL paths are relative to the OBJ.
-// Imports numeric material values; texture maps are not imported.
+// Imports numeric values and texture paths; GPU resources belong to the renderer.
 bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
     std::string& error, std::string* warning = nullptr);
