@@ -64,23 +64,50 @@ bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
     // filesystem::path keeps Japanese/other Unicode Windows filenames usable.
     std::ifstream file(filename, std::ios::binary);
     if (!file) { error = "Could not open the OBJ file."; return false; }
-    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    class RelativeMaterialReader : public tinyobj::MaterialReader {
+    public:
+        explicit RelativeMaterialReader(std::filesystem::path base) : base_(std::move(base)) {}
+        bool operator()(const std::string& name, std::vector<tinyobj::material_t>* materials,
+            std::map<std::string, int>* materialMap, std::string* warn, std::string* err) override
+        {
+            std::ifstream mtl(base_ / std::filesystem::u8path(name));
+            if (!mtl) {
+                if (warn) *warn += "Could not open MTL: " + name + "\n";
+                return false;
+            }
+            tinyobj::LoadMtl(materialMap, materials, &mtl, warn, err);
+            return true;
+        }
+    private:
+        std::filesystem::path base_;
+    } materialReader(filename.parent_path());
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string parserWarning;
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &parserWarning, &error,
+        &file, &materialReader, true, false)) return false;
     if (file.bad()) { error = "Could not read the OBJ file."; return false; }
-    tinyobj::ObjReaderConfig config;
-    config.triangulate = true;
-    config.vertex_color = false;
-    tinyobj::ObjReader reader;
-    if (!reader.ParseFromString(text, "", config)) {
-        error = reader.Error();
-        return false;
-    }
-    if (warning) *warning = reader.Warning();
-    const auto& attrib = reader.GetAttrib();
+    if (warning) *warning = parserWarning;
     ObjMesh loaded;
+    for (const auto& source : materials) {
+        ObjMaterial mat;
+        mat.name = source.name;
+        for (int i = 0; i < 3; ++i) {
+            mat.diffuse[i] = std::isfinite(source.diffuse[i]) ? source.diffuse[i] : 1.0f;
+            mat.specular[i] = std::isfinite(source.specular[i]) ? source.specular[i] : 0.0f;
+        }
+        mat.opacity = std::isfinite(source.dissolve) ? (std::max)(0.0f, (std::min)(1.0f, source.dissolve)) : 1.0f;
+        mat.shininess = std::isfinite(source.shininess) ? (std::max)(1.0f, source.shininess) : 32.0f;
+        loaded.materials.push_back(mat);
+        if (warning && (!source.diffuse_texname.empty() || !source.bump_texname.empty()))
+            *warning += "MTL texture maps are not imported: " + source.name + "\n";
+    }
     size_t skipped = 0;
-    for (const auto& shape : reader.GetShapes()) {
+    for (const auto& shape : shapes) {
         size_t offset = 0;
-        for (const auto faceSize : shape.mesh.num_face_vertices) {
+        for (size_t face = 0; face < shape.mesh.num_face_vertices.size(); ++face) {
+            const auto faceSize = shape.mesh.num_face_vertices[face];
             if (faceSize != 3 || offset + 3 > shape.mesh.indices.size()) {
                 error = "OBJ triangulation did not produce valid triangles.";
                 return false;
@@ -148,6 +175,12 @@ bool LoadOBJ(const std::filesystem::path& filename, ObjMesh& mesh,
                 error = "OBJ exceeds the supported D3D11 vertex-buffer size.";
                 return false;
             }
+            int materialId = face < shape.mesh.material_ids.size() ? shape.mesh.material_ids[face] : -1;
+            if (materialId < 0 || size_t(materialId) >= loaded.materials.size()) materialId = -1;
+            if (!loaded.batches.empty() && loaded.batches.back().materialId == materialId)
+                loaded.batches.back().indexCount += 3;
+            else
+                loaded.batches.push_back({static_cast<std::uint32_t>(loaded.indices.size()), 3, materialId});
             for (const Vertex& v : triangle) {
                 loaded.indices.push_back(static_cast<std::uint32_t>(loaded.vertices.size()));
                 loaded.vertices.push_back(v);

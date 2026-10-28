@@ -137,12 +137,14 @@
     <None Include="Models\cube.obj" />
     <None Include="Models\sphere.obj" />
     <None Include="Models\platonic.obj" />
+    <None Include="Models\platonic_m.obj" />
+    <None Include="Models\platonic_m.mtl" />
     <None Include="third_party\tinyobjloader\LICENSE" />
     <None Include="third_party\tinyobjloader\UPSTREAM_COMMIT.txt" />
   </ItemGroup>
   <ItemGroup>
     <TextureAsset Include="$(ProjectDir)*.png" />
-    <ModelAsset Include="$(ProjectDir)Models\*.obj" />
+    <ModelAsset Include="$(ProjectDir)Models\*.obj;$(ProjectDir)Models\*.mtl" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Vertex.h" />

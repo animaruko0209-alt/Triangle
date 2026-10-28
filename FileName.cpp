@@ -116,7 +116,7 @@ XMFLOAT3 pointLightColor(1.0f, 1.0f, 1.0f);
 float cameraYaw = 0.0f, cameraPitch = 0.0f, cameraDistance = 5.0f;
 bool mouseDraggingL = false, mouseDraggingR = false;
 int lastMouseX = 0, lastMouseY = 0;
-enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere, ObjPlatonic };
+enum class BoxShape { Cube, Cuboid123, Cuboid231, Cuboid312, ObjCube, ObjSphere, ObjPlatonic, ObjPlatonicMaterial };
 BoxShape g_boxShape = BoxShape::Cube;
 bool g_boxShapeDirty = false;
 
@@ -168,7 +168,7 @@ struct ObjAsset
     ObjMesh mesh;
     XMMATRIX fitTransform = XMMatrixIdentity();
 };
-ObjAsset g_objCube, g_objSphere, g_objPlatonic;
+ObjAsset g_objCube, g_objSphere, g_objPlatonic, g_objPlatonicMaterial;
 
 const ObjAsset* SelectedObjAsset()
 {
@@ -176,6 +176,7 @@ const ObjAsset* SelectedObjAsset()
     case BoxShape::ObjCube: return &g_objCube;
     case BoxShape::ObjSphere: return &g_objSphere;
     case BoxShape::ObjPlatonic: return &g_objPlatonic;
+    case BoxShape::ObjPlatonicMaterial: return &g_objPlatonicMaterial;
     default: return nullptr;
     }
 }
@@ -208,7 +209,8 @@ bool LoadDemoModels()
 {
     return LoadDemoModel(L"Models/cube.obj", g_objCube) &&
         LoadDemoModel(L"Models/sphere.obj", g_objSphere) &&
-        LoadDemoModel(L"Models/platonic.obj", g_objPlatonic);
+        LoadDemoModel(L"Models/platonic.obj", g_objPlatonic) &&
+        LoadDemoModel(L"Models/platonic_m.obj", g_objPlatonicMaterial);
 }
 ///  IndexBuffer  //// 
 ID3D11Buffer* g_ib = nullptr;
@@ -271,6 +273,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case 'N': SelectBoxShape(BoxShape::Cuboid312); return 0;
         case '9': SelectBoxShape(BoxShape::ObjCube); return 0;
         case '0': SelectBoxShape(BoxShape::ObjSphere); return 0;
+        case 'M': SelectBoxShape(BoxShape::ObjPlatonicMaterial); return 0;
         case 'P': SelectBoxShape(BoxShape::ObjPlatonic); return 0;
         }
         break;
@@ -1041,16 +1044,17 @@ cbuffer ConstantBuffer : register(b0)
     float4 main(PS_IN input) : SV_TARGET 
     { 
     // The small emissive marker shows the position of the point light.
-    if (surfaceType > 1.5f)
+    if (surfaceType > 1.5f && surfaceType < 2.5f)
         return float4(saturate(lightColor * intensity), 1.0f);
-    float4 diffuseColor = diffuse.Sample(sam,input.uv);
+    bool mtlSurface = surfaceType > 2.5f;
+    float4 diffuseColor = mtlSurface ? float4(1,1,1,1) : diffuse.Sample(sam,input.uv);
  
     // Version 3 supplies per-vertex normals and tangents. Legacy meshes
     // without normals retain the geometric-normal fallback.
     float3 n = input.worldNormal;
     bool hasVertexNormal = dot(n, n) > 0.000001f;
     n = hasVertexNormal ? normalize(n) : normalize(cross(ddx(input.worldPos), ddy(input.worldPos)));
-    if (hasVertexNormal) {
+    if (hasVertexNormal && !mtlSurface) {
         float3 tangent = normalize(input.worldTangent.xyz - n * dot(n, input.worldTangent.xyz));
         float3 bitangent = cross(n, tangent) * input.worldTangent.w;
         float3 mappedNormal = normal.Sample(sam, input.uv).xyz * 2.0f - 1.0f;
@@ -1078,7 +1082,7 @@ cbuffer ConstantBuffer : register(b0)
     float3 lighting = (diffuseTerm + specularTerm) * attenuation * intensity;
     // Retain a faint ambient fill so texture remains readable on unlit faces.
     lighting += baseColor * 0.035f;
-    float maskValue = mask.Sample(sam, input.uv).r;
+    float maskValue = mtlSurface ? 1.0f : mask.Sample(sam, input.uv).r;
     return float4(saturate(lighting * maskValue), diffuseColor.a * color.a * input.col.a);
     } 
     )";
@@ -1291,7 +1295,7 @@ void Clear_view()
         0);
 }
 
-void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured, const XMMATRIX* modelTransform = nullptr)// Render change 7 / 22
+void Render(const Vertex* vertices_, int vertexCount, const UINT* indices_, int indexCount, int move, SurfaceType surfaceType = SurfaceType::Textured, const XMMATRIX* modelTransform = nullptr, const ObjMesh* objMesh = nullptr)// Render change 7 / 22
 {
 
     if (g_vb) { g_vb->Release(); g_vb = nullptr; }
@@ -1586,17 +1590,36 @@ g_context->PSSetConstantBuffers(3, 1, &g_cameraBuffer);
 //g_context->Draw(vertexCount, 0); 
 
 // ★★ Index指定 複数三角形描画  
-g_context->DrawIndexed(indexCount, 0, 0);
+if (objMesh && !objMesh->materials.empty()) {
+    const MaterialBuffer fallback = mb;
+    for (const auto& batch : objMesh->batches) {
+        mb = fallback;
+        if (batch.materialId >= 0 && size_t(batch.materialId) < objMesh->materials.size()) {
+            const auto& mat = objMesh->materials[batch.materialId];
+            mb.color = XMFLOAT4(mat.diffuse[0], mat.diffuse[1], mat.diffuse[2], mat.opacity);
+            mb.specularColor = XMFLOAT4(mat.specular[0], mat.specular[1], mat.specular[2], 1);
+            mb.specularPower = mat.shininess;
+            mb.specularIntensity = 1.0f;
+            mb.diffuseWeight = 1.0f;
+            mb.surfaceType = 3.0f; // Numeric MTL material, without PNG/normal/mask modulation.
+        }
+        g_context->UpdateSubresource(g_materialBuffer, 0, nullptr, &mb, 0, 0);
+        g_context->DrawIndexed(batch.indexCount, batch.startIndex, 0);
+    }
+}
+else {
+    g_context->DrawIndexed(indexCount, 0, 0);
+}
 
 /*g_swapChain->Present(1, 0);*/
 }
-// Reuse the same position, rotation and glossy material for imported models.
+// Reuse the position and rotation; imported MTL values override the fallback material.
 void RenderSelectedBox()
 {
     if (const ObjAsset* asset = SelectedObjAsset()) {
         Render(asset->mesh.vertices.data(), static_cast<int>(asset->mesh.vertices.size()),
             asset->mesh.indices.data(), static_cast<int>(asset->mesh.indices.size()), 1,
-            SurfaceType::Mirror, &asset->fitTransform);
+            SurfaceType::Mirror, &asset->fitTransform, &asset->mesh);
     }
     else {
         Render(vertices_cube, 24, indices_cube, IndexCountCube, 1, SurfaceType::Mirror);
